@@ -1,7 +1,8 @@
 mod count;
 
 use clap::Parser;
-use count::{CountFlags, Counts, count_reader};
+use count::{CountFlags, Counts, count_bytes, count_reader};
+use memmap2::Mmap;
 use std::fs;
 use std::fs::File;
 use std::io::{self, BufReader};
@@ -127,19 +128,25 @@ fn main() {
 
 fn count_file(path: &str, flags: CountFlags) -> io::Result<Counts> {
     let f = File::open(path)?;
+    let meta = f.metadata()?;
 
     let effective = flags.default_if_none();
     if effective.bytes && !effective.lines && !effective.words
         && !effective.chars && !effective.max_line_len
     {
-        let meta = f.metadata()?;
         return Ok(Counts {
             bytes: meta.len(),
             ..Counts::default()
         });
     }
 
-    let reader = BufReader::with_capacity(64 * 1024, f);
+    // Use mmap for regular files > 0 bytes
+    if meta.is_file() && meta.len() > 0 {
+        let mmap = unsafe { Mmap::map(&f)? };
+        return Ok(count_bytes(&mmap, flags));
+    }
+
+    let reader = BufReader::with_capacity(256 * 1024, f);
     count_reader(reader, flags)
 }
 
