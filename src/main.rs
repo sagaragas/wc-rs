@@ -3,6 +3,7 @@ mod count;
 use clap::Parser;
 use count::{CountFlags, Counts, count_bytes, count_reader};
 use memmap2::Mmap;
+use rayon::prelude::*;
 use std::fs;
 use std::fs::File;
 use std::io::{self, BufReader};
@@ -50,9 +51,8 @@ fn number_width(n: u64) -> usize {
 
 fn compute_field_width(files: &[String], flags: &CountFlags) -> usize {
     if files.is_empty() {
-        return 7; // GNU wc default for stdin
+        return 7;
     }
-    // GNU wc uses file-size-based width only when bytes or chars are displayed
     if !flags.bytes && !flags.chars {
         return 1;
     }
@@ -82,43 +82,89 @@ fn main() {
     let display_flags = flags.default_if_none();
     let width = compute_field_width(&cli.files, &display_flags);
 
+    if cli.files.is_empty() {
+        // Stdin: single-threaded
+        match count_reader(io::stdin().lock(), flags) {
+            Ok(c) => print_counts(&c, &display_flags, width, None),
+            Err(e) => {
+                eprintln!("wc: standard input: {}", e);
+                process::exit(1);
+            }
+        }
+        return;
+    }
+
+    // Check if any file is stdin ("-") -- can't parallelize stdin
+    let has_stdin = cli.files.iter().any(|f| f == "-");
+
+    if has_stdin || cli.files.len() == 1 {
+        run_sequential(&cli.files, flags, &display_flags, width);
+    } else {
+        run_parallel(&cli.files, flags, &display_flags, width);
+    }
+}
+
+fn run_sequential(files: &[String], flags: CountFlags, display_flags: &CountFlags, width: usize) {
     let mut total = Counts::default();
     let mut had_error = false;
 
-    if cli.files.is_empty() {
-        match count_reader(io::stdin().lock(), flags) {
+    for path in files {
+        let result = if path == "-" {
+            count_reader(io::stdin().lock(), flags)
+        } else {
+            count_file(path, flags)
+        };
+
+        match result {
             Ok(c) => {
-                print_counts(&c, &display_flags, width, None);
+                print_counts(&c, display_flags, width, Some(path));
                 total.add(&c);
             }
             Err(e) => {
-                eprintln!("wc: standard input: {}", e);
+                eprintln!("wc: {}: {}", path, e);
                 had_error = true;
             }
         }
-    } else {
-        for path in &cli.files {
-            let result = if path == "-" {
-                count_reader(io::stdin().lock(), flags)
-            } else {
-                count_file(path, flags)
-            };
+    }
 
-            match result {
-                Ok(c) => {
-                    print_counts(&c, &display_flags, width, Some(path));
-                    total.add(&c);
-                }
-                Err(e) => {
-                    eprintln!("wc: {}: {}", path, e);
-                    had_error = true;
-                }
+    if files.len() > 1 {
+        print_counts(&total, display_flags, width, Some("total"));
+    }
+
+    if had_error {
+        process::exit(1);
+    }
+}
+
+fn run_parallel(files: &[String], flags: CountFlags, display_flags: &CountFlags, width: usize) {
+    // Count all files in parallel, preserving order
+    let results: Vec<(String, Result<Counts, String>)> = files
+        .par_iter()
+        .map(|path| {
+            let result = count_file(path, flags).map_err(|e| format!("{}", e));
+            (path.clone(), result)
+        })
+        .collect();
+
+    // Print in original order (sequential, to match GNU wc output)
+    let mut total = Counts::default();
+    let mut had_error = false;
+
+    for (path, result) in &results {
+        match result {
+            Ok(c) => {
+                print_counts(c, display_flags, width, Some(path));
+                total.add(c);
+            }
+            Err(e) => {
+                eprintln!("wc: {}: {}", path, e);
+                had_error = true;
             }
         }
+    }
 
-        if cli.files.len() > 1 {
-            print_counts(&total, &display_flags, width, Some("total"));
-        }
+    if files.len() > 1 {
+        print_counts(&total, display_flags, width, Some("total"));
     }
 
     if had_error {
@@ -140,7 +186,6 @@ fn count_file(path: &str, flags: CountFlags) -> io::Result<Counts> {
         });
     }
 
-    // Use mmap for regular files > 0 bytes
     if meta.is_file() && meta.len() > 0 {
         let mmap = unsafe { Mmap::map(&f)? };
         return Ok(count_bytes(&mmap, flags));

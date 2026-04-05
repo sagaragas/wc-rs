@@ -114,15 +114,6 @@ fn count_bytes_lines(data: &[u8]) -> Counts {
 }
 
 #[cfg(target_arch = "x86_64")]
-fn count_words_simd(data: &[u8]) -> u64 {
-    if is_x86_feature_detected!("avx2") {
-        unsafe { count_words_avx2(data) }
-    } else {
-        unsafe { count_words_sse2(data) }
-    }
-}
-
-#[cfg(target_arch = "x86_64")]
 fn count_words_lines_simd(data: &[u8]) -> (u64, u64) {
     if is_x86_feature_detected!("avx2") {
         unsafe { count_words_lines_avx2(data) }
@@ -192,53 +183,6 @@ unsafe fn count_words_lines_avx2(data: &[u8]) -> (u64, u64) {
     }
 
     (words, lines)
-}
-
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2")]
-unsafe fn count_words_avx2(data: &[u8]) -> u64 {
-    use std::arch::x86_64::*;
-
-    let mut words: u64 = 0;
-    let mut prev_not_word_carry: u32 = 1; // start of input = not in word
-
-    let x20 = _mm256_set1_epi8(0x20i8);
-    let xc1 = _mm256_set1_epi8(0xC1u8 as i8);
-    let xf5 = _mm256_set1_epi8(0xF5u8 as i8);
-
-    let chunks = data.chunks_exact(32);
-    let remainder = chunks.remainder();
-
-    for chunk in chunks {
-        let v = _mm256_loadu_si256(chunk.as_ptr() as *const __m256i);
-
-        // Word byte detection
-        let gt_x20 = _mm256_cmpgt_epi8(v, x20);
-        let gt_xc1 = _mm256_cmpgt_epi8(v, xc1);
-        let lt_xf5 = _mm256_cmpgt_epi8(xf5, v);
-        let utf8_lead = _mm256_and_si256(gt_xc1, lt_xf5);
-        let word_vec = _mm256_or_si256(gt_x20, utf8_lead);
-        let word_bits = _mm256_movemask_epi8(word_vec) as u32;
-
-        let prev_not_word = ((!word_bits) << 1) | prev_not_word_carry;
-        let word_starts = prev_not_word & word_bits;
-        words += word_starts.count_ones() as u64;
-        prev_not_word_carry = if word_bits & (1 << 31) != 0 { 0 } else { 1 };
-    }
-
-    // Scalar remainder
-    let mut prev_was_space = prev_not_word_carry != 0;
-    for &b in remainder {
-        let class = BYTE_CLASS[b as usize];
-        if class & IS_WHITESPACE != 0 {
-            prev_was_space = true;
-        } else if class & IS_WORD != 0 {
-            if prev_was_space { words += 1; }
-            prev_was_space = false;
-        }
-    }
-
-    words
 }
 
 #[cfg(target_arch = "x86_64")]
