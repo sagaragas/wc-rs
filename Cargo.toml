@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "A fast wc replacement with AVX2 SIMD and multi-file parallelism"
 license = "MIT"
-repository = "https://github.com/user/wc-rs"
+repository = "https://github.com/sagaragas/wc-rs"
 keywords = ["wc", "wordcount", "simd", "cli"]
 categories = ["command-line-utilities"]
 
