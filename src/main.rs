@@ -10,7 +10,12 @@ use std::io::{self, BufReader};
 use std::process;
 
 #[derive(Parser)]
-#[command(name = "wc", about = "word, line, character, and byte count")]
+#[command(
+    name = "wc",
+    about = "word, line, character, and byte count",
+    version,
+    after_help = "With no FILE, or when FILE is -, read standard input."
+)]
 struct Cli {
     /// Print the newline counts
     #[arg(short = 'l', long = "lines")]
