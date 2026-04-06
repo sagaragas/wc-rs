@@ -11,7 +11,7 @@ Benchmarked on a 100MB text corpus (12-core machine):
 | Default (-lwc) | 278 MB/s | 555 MB/s | **7,490 MB/s** | **26.9x** |
 | Words (-w) | 280 MB/s | 561 MB/s | **6,991 MB/s** | **24.9x** |
 | Lines (-l) | 8,738 MB/s | 6,991 MB/s | **9,533 MB/s** | **1.1x** |
-| Chars (-m) | 294 MB/s | -- | **5,243 MB/s** | **17.8x** |
+| Chars (-m) | 294 MB/s | N/A | **5,243 MB/s** | **17.8x** |
 | Bytes (-c) | fstat | fstat | **fstat** | tied |
 
 Multi-file (1000 files, 53MB total):
