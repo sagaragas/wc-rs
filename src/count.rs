@@ -84,9 +84,9 @@ impl CountFlags {
 pub fn count_reader<R: Read>(reader: R, flags: CountFlags) -> io::Result<Counts> {
     let flags = flags.default_if_none();
 
-    if flags.needs_chars() || flags.needs_max_line_len() {
+    if flags.needs_max_line_len() {
         count_full(reader, flags)
-    } else if flags.needs_words() {
+    } else if flags.needs_chars() || flags.needs_words() {
         count_lwb(reader)
     } else {
         count_lines_bytes(reader)
@@ -96,12 +96,83 @@ pub fn count_reader<R: Read>(reader: R, flags: CountFlags) -> io::Result<Counts>
 pub fn count_bytes(data: &[u8], flags: CountFlags) -> Counts {
     let flags = flags.default_if_none();
 
-    if flags.needs_chars() || flags.needs_max_line_len() {
+    if flags.needs_max_line_len() {
         count_bytes_full(data, flags)
+    } else if flags.needs_chars() && flags.needs_words() {
+        count_bytes_lwbc(data)
+    } else if flags.needs_chars() {
+        count_bytes_chars(data)
     } else if flags.needs_words() {
         count_bytes_lwb(data)
     } else {
         count_bytes_lines(data)
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn count_chars_simd(data: &[u8]) -> u64 {
+    if is_x86_feature_detected!("avx2") {
+        unsafe { count_chars_avx2(data) }
+    } else {
+        count_chars_scalar(data)
+    }
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn count_chars_simd(data: &[u8]) -> u64 {
+    count_chars_scalar(data)
+}
+
+fn count_chars_scalar(data: &[u8]) -> u64 {
+    data.iter().filter(|&&b| (b & 0xC0) != 0x80).count() as u64
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn count_chars_avx2(data: &[u8]) -> u64 {
+    use std::arch::x86_64::*;
+
+    let mut chars: u64 = 0;
+    // Non-continuation byte: b > 0xBF (signed) = b > -65 (signed)
+    // This catches 0x00-0x7F (ASCII) and 0xC0-0xFF (UTF-8 leading bytes)
+    let threshold = _mm256_set1_epi8(-65i8); // 0xBF
+
+    let chunks = data.chunks_exact(32);
+    let remainder = chunks.remainder();
+
+    for chunk in chunks {
+        let v = _mm256_loadu_si256(chunk.as_ptr() as *const __m256i);
+        let non_cont = _mm256_cmpgt_epi8(v, threshold);
+        chars += (_mm256_movemask_epi8(non_cont) as u32).count_ones() as u64;
+    }
+
+    for &b in remainder {
+        if (b & 0xC0) != 0x80 {
+            chars += 1;
+        }
+    }
+    chars
+}
+
+fn count_bytes_chars(data: &[u8]) -> Counts {
+    let (words, lines) = count_words_lines_simd(data);
+    Counts {
+        lines,
+        words,
+        chars: count_chars_simd(data),
+        bytes: data.len() as u64,
+        ..Counts::default()
+    }
+}
+
+fn count_bytes_lwbc(data: &[u8]) -> Counts {
+    let (words, lines) = count_words_lines_simd(data);
+    Counts {
+        lines,
+        words,
+        chars: count_chars_simd(data),
+        bytes: data.len() as u64,
+        ..Counts::default()
     }
 }
 
