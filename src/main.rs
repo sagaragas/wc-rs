@@ -54,9 +54,20 @@ fn number_width(n: u64) -> usize {
     w
 }
 
+fn count_active_columns(flags: &CountFlags) -> usize {
+    let mut n = 0;
+    if flags.lines { n += 1; }
+    if flags.words { n += 1; }
+    if flags.chars { n += 1; }
+    if flags.bytes { n += 1; }
+    if flags.max_line_len { n += 1; }
+    n
+}
+
 fn compute_field_width(files: &[String], flags: &CountFlags) -> usize {
     if files.is_empty() {
-        return 7;
+        // stdin: GNU wc uses width 7 for multi-column, natural width for single-column
+        return if count_active_columns(flags) > 1 { 7 } else { 1 };
     }
     if !flags.bytes && !flags.chars {
         return 1;
@@ -64,7 +75,7 @@ fn compute_field_width(files: &[String], flags: &CountFlags) -> usize {
     let mut total_size: u64 = 0;
     for path in files {
         if path == "-" {
-            return 7;
+            return if count_active_columns(flags) > 1 { 7 } else { 1 };
         }
         if let Ok(meta) = fs::metadata(path) {
             total_size += meta.len();
@@ -92,7 +103,7 @@ fn main() {
         match count_reader(io::stdin().lock(), flags) {
             Ok(c) => print_counts(&c, &display_flags, width, None),
             Err(e) => {
-                eprintln!("wc: standard input: {}", e);
+                eprintln!("wc: standard input: {}", format_io_error(&e));
                 process::exit(1);
             }
         }
@@ -126,7 +137,7 @@ fn run_sequential(files: &[String], flags: CountFlags, display_flags: &CountFlag
                 total.add(&c);
             }
             Err(e) => {
-                eprintln!("wc: {}: {}", path, e);
+                eprintln!("wc: {}: {}", path, format_io_error(&e));
                 had_error = true;
             }
         }
@@ -142,16 +153,15 @@ fn run_sequential(files: &[String], flags: CountFlags, display_flags: &CountFlag
 }
 
 fn run_parallel(files: &[String], flags: CountFlags, display_flags: &CountFlags, width: usize) {
-    // Count all files in parallel, preserving order
     let results: Vec<(String, Result<Counts, String>)> = files
         .par_iter()
         .map(|path| {
-            let result = count_file(path, flags).map_err(|e| format!("{}", e));
+            let result = count_file(path, flags)
+                .map_err(|e| format_io_error(&e));
             (path.clone(), result)
         })
         .collect();
 
-    // Print in original order (sequential, to match GNU wc output)
     let mut total = Counts::default();
     let mut had_error = false;
 
@@ -198,6 +208,21 @@ fn count_file(path: &str, flags: CountFlags) -> io::Result<Counts> {
 
     let reader = BufReader::with_capacity(256 * 1024, f);
     count_reader(reader, flags)
+}
+
+fn format_io_error(e: &io::Error) -> String {
+    if let Some(os_err) = e.raw_os_error() {
+        // Use strerror-style message without Rust's "(os error N)" suffix
+        let msg = match os_err {
+            2 => "No such file or directory",
+            13 => "Permission denied",
+            21 => "Is a directory",
+            _ => return format!("{}", e),
+        };
+        msg.to_string()
+    } else {
+        format!("{}", e)
+    }
 }
 
 fn print_counts(counts: &Counts, flags: &CountFlags, width: usize, filename: Option<&str>) {

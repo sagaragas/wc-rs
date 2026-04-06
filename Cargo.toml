@@ -13,6 +13,7 @@ clap = { version = "4", features = ["derive"] }
 memchr = "2"
 memmap2 = "0.9"
 rayon = "1"
+unicode-width = "0.2"
 
 [dev-dependencies]
 tempfile = "3"

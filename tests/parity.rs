@@ -162,3 +162,51 @@ fn parity_stdin() {
         "stdin parity mismatch"
     );
 }
+
+fn stdin_parity(input: &[u8], flags: &[&str]) {
+    let gnu = Command::new("wc")
+        .args(flags)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            child.stdin.take().unwrap().write_all(input)?;
+            child.wait_with_output()
+        })
+        .unwrap();
+
+    let ours = Command::new(WC_RS)
+        .args(flags)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            child.stdin.take().unwrap().write_all(input)?;
+            child.wait_with_output()
+        })
+        .unwrap();
+
+    assert_eq!(
+        String::from_utf8_lossy(&gnu.stdout),
+        String::from_utf8_lossy(&ours.stdout),
+        "stdin parity mismatch with flags {:?}",
+        flags
+    );
+}
+
+#[test]
+fn parity_stdin_chars() {
+    let input = "hello world\n".as_bytes();
+    stdin_parity(input, &["-m"]);
+    stdin_parity(input, &["-m", "-c"]);
+    stdin_parity(input, &["-m", "-l"]);
+}
+
+#[test]
+fn parity_stdin_single_flags() {
+    let input = "hello world\n".as_bytes();
+    stdin_parity(input, &["-l"]);
+    stdin_parity(input, &["-w"]);
+    stdin_parity(input, &["-c"]);
+    stdin_parity(input, &["-L"]);
+}

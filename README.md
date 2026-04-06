@@ -75,11 +75,14 @@ wc-rs -lw *.txt
 
 ## Correctness
 
-Output matches GNU wc exactly. Verified with 13 parity tests covering:
+Output matches GNU wc on well-formed text inputs. Verified with 13 parity tests covering:
 - Empty files, single/multi-line, no trailing newline
-- UTF-8 text, binary data, control characters
+- UTF-8 text (including combining marks and wide characters for `-L`)
+- Binary data, control characters
 - Tab handling for max-line-length
 - Multi-file totals, stdin input
+
+Known limitation: `-m` counts non-continuation bytes, which differs from GNU wc's `mbrtowc()` on malformed UTF-8 sequences. For valid UTF-8 the results are identical.
 
 ## How the optimizations were discovered
 
